@@ -747,20 +747,27 @@ func drawGameOver(screen *ebiten.Image) {
 	}
 
 	if gameOverTimer <= 0 {
-		// Imagem cobre a tela toda (cover)
+		// Fundo escuro cobrindo toda a tela, ja que a imagem nao preenche mais 100%
+		vector.DrawFilledRect(screen, 0, 0, float32(screenW), float32(screenH), color.RGBA{10, 10, 18, 235}, false)
+
+		// Imagem inteira, sem cortar, com margem e respeitando espaco da faixa de score
 		if gopherImage != nil {
 			iw := gopherImage.Bounds().Dx()
 			ih := gopherImage.Bounds().Dy()
-			scaleX := float64(screenW) / float64(iw)
-			scaleY := float64(screenH) / float64(ih)
+			margin := 40.0
+			scoreBarSpace := 70.0
+			availW := float64(screenW) - margin*2
+			availH := float64(screenH) - margin*2 - scoreBarSpace
+			scaleX := availW / float64(iw)
+			scaleY := availH / float64(ih)
 			scale := scaleX
-			if scaleY > scale {
+			if scaleY < scale {
 				scale = scaleY
 			}
 			drawW := float64(iw) * scale
 			drawH := float64(ih) * scale
 			drawX := (float64(screenW) - drawW) / 2
-			drawY := (float64(screenH) - drawH) / 2
+			drawY := (float64(screenH) - scoreBarSpace - drawH) / 2
 			op := &ebiten.DrawImageOptions{}
 			op.GeoM.Scale(scale, scale)
 			op.GeoM.Translate(drawX, drawY)
