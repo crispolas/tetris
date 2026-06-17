@@ -14,7 +14,6 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
-
 )
 
 //go:embed gameover.png
@@ -22,9 +21,6 @@ var gopherBytes []byte
 
 //go:embed start.png
 var startBytes []byte
-
-//go:embed prompt.png
-var promptBytes []byte
 
 //go:embed font.ttf
 var fontRegularBytes []byte
@@ -72,7 +68,6 @@ const gameOverAnimDuration = 1.5
 
 var gopherImage *ebiten.Image
 var startImage *ebiten.Image
-var promptImage *ebiten.Image
 
 // blinkTimer controla o pisca-pisca do prompt
 var blinkTimer float64
@@ -114,7 +109,6 @@ var pieceColors = [8]color.RGBA{
 
 type Game struct{}
 
-
 func main() {
 	ebiten.SetWindowSize(screenW, screenH)
 	ebiten.SetWindowTitle("Tetris Imperativo — Go")
@@ -131,11 +125,6 @@ func main() {
 	simg, _, serr := ebitenutil.NewImageFromReader(bytes.NewReader(startBytes))
 	if serr == nil {
 		startImage = simg
-	}
-
-	pimg, _, perr := ebitenutil.NewImageFromReader(bytes.NewReader(promptBytes))
-	if perr == nil {
-		promptImage = pimg
 	}
 
 	highScore = 0
@@ -501,11 +490,11 @@ func drawStartScreen(screen *ebiten.Image) {
 	if startImage != nil {
 		iw := startImage.Bounds().Dx()
 		ih := startImage.Bounds().Dy()
-		// Escala "cover": preenche a tela inteira mantendo proporcao
+		// Escala "contain": a imagem inteira sempre cabe na tela, sem cortar bordas.
 		scaleX := float64(screenW) / float64(iw)
 		scaleY := float64(screenH) / float64(ih)
 		scale := scaleX
-		if scaleY > scale {
+		if scaleY < scale {
 			scale = scaleY
 		}
 		drawW := float64(iw) * scale
@@ -517,7 +506,7 @@ func drawStartScreen(screen *ebiten.Image) {
 		op.GeoM.Translate(drawX, drawY)
 		screen.DrawImage(startImage, op)
 	}
-	// Prompt sobreposto na base da tela
+	// Prompt em texto, numa faixa propria na base da tela
 	drawPrompt(screen)
 }
 
@@ -624,33 +613,28 @@ var accentPurple = color.RGBA{156, 100, 230, 255}
 var textWhite = color.RGBA{230, 232, 255, 255}
 var textDim = color.RGBA{140, 145, 170, 255}
 
-
-// drawPrompt desenha a imagem de "pressione ENTER/ESPAÇO" com efeito de pisca suave.
+// drawPrompt desenha o texto "ESPAÇO OU ENTER PARA JOGAR" com efeito de pisca suave,
+// sempre numa faixa escura na base da tela para garantir legibilidade sobre qualquer imagem.
 func drawPrompt(screen *ebiten.Image) {
-	if promptImage == nil {
-		return
-	}
+	promptStr := "[ ESPAÇO ou ENTER para jogar ]"
+
 	// Opacidade oscila entre 40% e 100% usando seno
 	alpha := float32(0.5 + 0.5*math.Sin(blinkTimer*3.5))
 	if alpha < 0.4 {
 		alpha = 0.4
 	}
 
-	iw := promptImage.Bounds().Dx()
-	ih := promptImage.Bounds().Dy()
-	// Escala para caber na largura da tela com margem
-	maxW := float64(screenW - 40)
-	scale := maxW / float64(iw)
-	drawW := float64(iw) * scale
-	drawH := float64(ih) * scale
-	drawX := (float64(screenW) - drawW) / 2
-	drawY := float64(screenH) - drawH - 18
+	barH := float32(40)
+	barY := float32(screenH) - barH
+	vector.DrawFilledRect(screen, 0, barY, float32(screenW), barH, color.RGBA{0, 0, 0, 200}, false)
 
-	op := &ebiten.DrawImageOptions{}
-	op.GeoM.Scale(scale, scale)
-	op.GeoM.Translate(drawX, drawY)
-	op.ColorScale.ScaleAlpha(alpha)
-	screen.DrawImage(promptImage, op)
+	sw, sh := text.Measure(promptStr, faceBoldMd, 0)
+	tx := screenW/2 - int(sw)/2
+	ty := int(barY) + int(barH-sh)/2
+
+	clr := accentCyan
+	clr.A = uint8(255 * alpha)
+	drawText(screen, promptStr, faceBoldMd, tx, ty, clr)
 }
 
 func drawSidePanel(screen *ebiten.Image) {
@@ -783,18 +767,14 @@ func drawGameOver(screen *ebiten.Image) {
 			screen.DrawImage(gopherImage, op)
 		}
 
-		// Overlay escuro sutil na metade inferior para legibilidade do score
-		promptH := 0.0
-		if promptImage != nil {
-			promptH = float64(promptImage.Bounds().Dy()) * (float64(screenW) / float64(promptImage.Bounds().Dx()))
-		}
-		overlayH := float32(promptH + 36)
-		vector.DrawFilledRect(screen, 0, float32(screenH)-overlayH-36, float32(screenW), overlayH+36, color.RGBA{0, 0, 0, 160}, false)
+		// Overlay escuro na faixa inferior, atras do score e do prompt
+		scoreBarH := float32(70)
+		vector.DrawFilledRect(screen, 0, float32(screenH)-scoreBarH, float32(screenW), scoreBarH, color.RGBA{0, 0, 0, 170}, false)
 
-		// Score acima do prompt
+		// Score centralizado dentro dessa faixa, acima do prompt
 		scoreStr := fmt.Sprintf("Score: %d   |   Recorde: %d", score, highScore)
-		scoreY := int(float64(screenH) - promptH - 28)
 		sw, _ := text.Measure(scoreStr, faceBoldMd, 0)
+		scoreY := int(float64(screenH) - scoreBarH + 12)
 		drawText(screen, scoreStr, faceBoldMd, screenW/2-int(sw)/2, scoreY, textWhite)
 
 		drawPrompt(screen)
