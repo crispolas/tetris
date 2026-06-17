@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/audio"
+	"github.com/hajimehoshi/ebiten/v2/audio/mp3"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
@@ -27,6 +29,21 @@ var fontRegularBytes []byte
 
 //go:embed font_bold.ttf
 var fontBoldBytes []byte
+
+//go:embed bgm.mp3
+var bgmBytes []byte
+
+//go:embed drop.mp3
+var dropBytes []byte
+
+//go:embed line.mp3
+var lineBytes []byte
+
+//go:embed gover.mp3
+var goverBytes []byte
+
+//go:embed loser.mp3
+var loserBytes []byte
 
 const boardHeight = 18
 const boardWidth = 14
@@ -68,6 +85,19 @@ const gameOverAnimDuration = 1.5
 
 var gopherImage *ebiten.Image
 var startImage *ebiten.Image
+
+// ===== ESTADO GLOBAL DE AUDIO (paradigma imperativo: players sao reutilizados,
+// nunca recriados; controle de "tocar so uma vez" feito via flags globais) =====
+var audioContext *audio.Context
+var bgmPlayer *audio.Player
+var dropPlayer *audio.Player
+var linePlayer *audio.Player
+var goverPlayer *audio.Player
+var loserPlayer *audio.Player
+
+// goverPlayed garante que gover.mp3 toque uma unica vez, exatamente no
+// instante em que a imagem de game over aparece na tela.
+var goverPlayed bool
 
 // blinkTimer controla o pisca-pisca do prompt
 var blinkTimer float64
@@ -117,6 +147,9 @@ func main() {
 	// Carrega fontes TTF
 	loadFontsFromBytes()
 
+	// Carrega e prepara os players de audio
+	loadAudio()
+
 	img, _, err := ebitenutil.NewImageFromReader(bytes.NewReader(gopherBytes))
 	if err == nil {
 		gopherImage = img
@@ -156,6 +189,77 @@ func loadFontsFromBytes() {
 	faceBoldXl = &text.GoTextFace{Source: boldSrc, Size: 26}
 }
 
+// ===== CONCEITO DA DISCIPLINA: ESTADO GLOBAL + MUTACAO EXPLICITA =====
+// loadAudio decodifica cada mp3 uma unica vez e guarda o player resultante
+// em variavel global. Os players sao reaproveitados (Rewind/Seek) em vez de
+// recriados a cada som, evitando overhead e mantendo o estilo imperativo.
+func loadAudio() {
+	audioContext = audio.NewContext(48000)
+
+	makePlayer := func(data []byte) *audio.Player {
+		stream, err := mp3.DecodeWithSampleRate(48000, bytes.NewReader(data))
+		if err != nil {
+			panic(fmt.Sprintf("falha ao decodificar mp3: %v", err))
+		}
+		player, err := audioContext.NewPlayer(stream)
+		if err != nil {
+			panic(fmt.Sprintf("falha ao criar player de audio: %v", err))
+		}
+		return player
+	}
+
+	bgmPlayer = makePlayer(bgmBytes)
+	dropPlayer = makePlayer(dropBytes)
+	linePlayer = makePlayer(lineBytes)
+	goverPlayer = makePlayer(goverBytes)
+	loserPlayer = makePlayer(loserBytes)
+}
+
+// playOneShot reinicia o player do zero e toca. Usado para efeitos sonoros
+// curtos (drop, line, gover, loser) que podem repetir a qualquer momento.
+func playOneShot(p *audio.Player) {
+	if p == nil {
+		return
+	}
+	p.Pause()
+	if err := p.Rewind(); err != nil {
+		return
+	}
+	p.Play()
+}
+
+// restartBGM para a musica de fundo (se estiver tocando) e a reinicia do
+// zero (posicao 0), exatamente como pedido: toda partida nova comeca a bgm
+// do absoluto inicio, nunca de onde parou.
+func restartBGM() {
+	if bgmPlayer == nil {
+		return
+	}
+	bgmPlayer.Pause()
+	bgmPlayer.Rewind()
+	bgmPlayer.Play()
+}
+
+// stopBGM interrompe a musica de fundo (usado no instante do game over).
+func stopBGM() {
+	if bgmPlayer == nil {
+		return
+	}
+	bgmPlayer.Pause()
+}
+
+// loopBGM verifica se a bgm terminou e a reinicia, criando um loop manual.
+// Chamado a cada frame em Update enquanto a partida estiver em andamento.
+func loopBGM() {
+	if bgmPlayer == nil || !gameStarted || gameOver {
+		return
+	}
+	if !bgmPlayer.IsPlaying() {
+		bgmPlayer.Rewind()
+		bgmPlayer.Play()
+	}
+}
+
 // drawText desenha texto com a face especificada, cor e posicao (x, y = topo-esquerdo).
 func drawText(screen *ebiten.Image, str string, face *text.GoTextFace, x, y int, clr color.RGBA) {
 	op := &text.DrawOptions{}
@@ -184,6 +288,10 @@ func initGame() {
 	tickInterval = 0.5
 	flashTimer = 0
 	seed = int(time.Now().UnixNano() % 100000)
+
+	// Audio: reseta flag de gover e reinicia a musica de fundo do zero
+	goverPlayed = false
+	restartBGM()
 
 	for i := 0; i < previewCount; i++ {
 		ni := nextPieceIndex()
@@ -238,6 +346,10 @@ func spawnPiece() {
 		if score > highScore {
 			highScore = score
 		}
+		// O jogador perdeu agora mesmo: para a bgm e toca o som de derrota
+		// na hora exata da perda (nao espera a animacao/imagem de game over).
+		stopBGM()
+		playOneShot(loserPlayer)
 	}
 }
 
@@ -311,6 +423,7 @@ func lockPiece(gameBoard *[boardHeight][boardWidth]int) {
 			}
 		}
 	}
+	playOneShot(dropPlayer)
 }
 
 func markFullLines(gameBoard *[boardHeight][boardWidth]int) {
@@ -330,6 +443,9 @@ func markFullLines(gameBoard *[boardHeight][boardWidth]int) {
 	}
 	if found {
 		flashTimer = flashDuration
+		// Toca o som de linha completa uma unica vez, mesmo que 2, 3 ou 4
+		// linhas tenham sido completadas simultaneamente neste lock.
+		playOneShot(linePlayer)
 	} else {
 		spawnPiece()
 	}
@@ -411,6 +527,12 @@ func (g *Game) Update() error {
 			gameOverTimer -= 1.0 / 60.0
 		}
 		if gameOverTimer <= 0 {
+			// Dispara gover.mp3 exatamente no frame em que a animacao termina
+			// e a imagem de game over passa a ser exibida na tela.
+			if !goverPlayed {
+				goverPlayed = true
+				playOneShot(goverPlayer)
+			}
 			if inputJustPressed(ebiten.KeyEnter) || inputJustPressed(ebiten.KeySpace) {
 				gameStarted = false
 			}
@@ -420,6 +542,7 @@ func (g *Game) Update() error {
 
 	if flashTimer > 0 {
 		flashTimer -= 1.0 / 60.0
+		loopBGM()
 		if flashTimer <= 0 {
 			flashTimer = 0
 			clearFullLines(&board)
@@ -451,6 +574,9 @@ func (g *Game) Update() error {
 	}
 
 	blinkTimer += 1.0 / 60.0
+
+	// Garante que a bgm continue tocando em loop enquanto a partida estiver ativa
+	loopBGM()
 
 	tickAccum += 1.0 / 60.0
 	if tickAccum >= tickInterval {
