@@ -630,7 +630,7 @@ func drawPrompt(screen *ebiten.Image) {
 
 	sw, sh := text.Measure(promptStr, faceBoldMd, 0)
 	tx := screenW/2 - int(sw)/2
-	ty := int(barY) + int(barH-sh)/2
+	ty := int(barY) + int(float64(barH)-sh)/2
 
 	clr := accentCyan
 	clr.A = uint8(255 * alpha)
@@ -774,7 +774,7 @@ func drawGameOver(screen *ebiten.Image) {
 		// Score centralizado dentro dessa faixa, acima do prompt
 		scoreStr := fmt.Sprintf("Score: %d   |   Recorde: %d", score, highScore)
 		sw, _ := text.Measure(scoreStr, faceBoldMd, 0)
-		scoreY := int(float64(screenH) - scoreBarH + 12)
+		scoreY := int(float64(screenH) - float64(scoreBarH) + 12)
 		drawText(screen, scoreStr, faceBoldMd, screenW/2-int(sw)/2, scoreY, textWhite)
 
 		drawPrompt(screen)
