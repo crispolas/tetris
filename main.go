@@ -23,6 +23,9 @@ var gopherBytes []byte
 //go:embed start.png
 var startBytes []byte
 
+//go:embed prompt.png
+var promptBytes []byte
+
 //go:embed font.ttf
 var fontRegularBytes []byte
 
@@ -69,6 +72,10 @@ const gameOverAnimDuration = 1.5
 
 var gopherImage *ebiten.Image
 var startImage *ebiten.Image
+var promptImage *ebiten.Image
+
+// blinkTimer controla o pisca-pisca do prompt
+var blinkTimer float64
 
 // Fontes TTF
 var faceRegularSm *text.GoTextFace
@@ -124,6 +131,11 @@ func main() {
 	simg, _, serr := ebitenutil.NewImageFromReader(bytes.NewReader(startBytes))
 	if serr == nil {
 		startImage = simg
+	}
+
+	pimg, _, perr := ebitenutil.NewImageFromReader(bytes.NewReader(promptBytes))
+	if perr == nil {
+		promptImage = pimg
 	}
 
 	highScore = 0
@@ -397,6 +409,7 @@ func inputJustPressed(key ebiten.Key) bool {
 
 func (g *Game) Update() error {
 	if !gameStarted {
+		blinkTimer += 1.0 / 60.0
 		if inputJustPressed(ebiten.KeyEnter) || inputJustPressed(ebiten.KeySpace) {
 			initGame()
 		}
@@ -404,6 +417,7 @@ func (g *Game) Update() error {
 	}
 
 	if gameOver {
+		blinkTimer += 1.0 / 60.0
 		if gameOverTimer > 0 {
 			gameOverTimer -= 1.0 / 60.0
 		}
@@ -447,6 +461,8 @@ func (g *Game) Update() error {
 		hardDrop()
 	}
 
+	blinkTimer += 1.0 / 60.0
+
 	tickAccum += 1.0 / 60.0
 	if tickAccum >= tickInterval {
 		tickAccum = 0
@@ -481,12 +497,19 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 }
 
 func drawStartScreen(screen *ebiten.Image) {
+	screen.Fill(color.RGBA{0, 0, 0, 255})
 	if startImage != nil {
 		iw := startImage.Bounds().Dx()
 		ih := startImage.Bounds().Dy()
 
-		scaleX := float64(screenW) / float64(iw)
-		scaleY := float64(screenH) / float64(ih)
+		// Reserva espaco embaixo para o prompt
+		promptH := 0.0
+		if promptImage != nil {
+			promptH = float64(promptImage.Bounds().Dy()) * (float64(screenW-40) / float64(promptImage.Bounds().Dx())) + 24
+		}
+		availH := float64(screenH) - promptH
+		scaleX := float64(screenW-40) / float64(iw)
+		scaleY := availH / float64(ih)
 		scale := scaleX
 		if scaleY < scale {
 			scale = scaleY
@@ -495,19 +518,14 @@ func drawStartScreen(screen *ebiten.Image) {
 		drawW := float64(iw) * scale
 		drawH := float64(ih) * scale
 		drawX := (float64(screenW) - drawW) / 2
-		drawY := (float64(screenH) - drawH) / 2
+		drawY := (availH-drawH)/2
 
 		op := &ebiten.DrawImageOptions{}
 		op.GeoM.Scale(scale, scale)
 		op.GeoM.Translate(drawX, drawY)
 		screen.DrawImage(startImage, op)
-		return
 	}
-
-	cx := screenW / 2
-	cy := screenH / 2
-	ebitenutil.DebugPrintAt(screen, "TETRIS IMPERATIVO", cx-70, cy-10)
-	ebitenutil.DebugPrintAt(screen, "[ ENTER ou ESPACO para jogar ]", cx-116, cy+10)
+	drawPrompt(screen)
 }
 
 func boardOriginX() int { return padding }
@@ -613,6 +631,35 @@ var accentPurple = color.RGBA{156, 100, 230, 255}
 var textWhite = color.RGBA{230, 232, 255, 255}
 var textDim = color.RGBA{140, 145, 170, 255}
 
+
+// drawPrompt desenha a imagem de "pressione ENTER/ESPAÇO" com efeito de pisca suave.
+func drawPrompt(screen *ebiten.Image) {
+	if promptImage == nil {
+		return
+	}
+	// Opacidade oscila entre 40% e 100% usando seno
+	alpha := float32(0.5 + 0.5*math.Sin(blinkTimer*3.5))
+	if alpha < 0.4 {
+		alpha = 0.4
+	}
+
+	iw := promptImage.Bounds().Dx()
+	ih := promptImage.Bounds().Dy()
+	// Escala para caber na largura da tela com margem
+	maxW := float64(screenW - 40)
+	scale := maxW / float64(iw)
+	drawW := float64(iw) * scale
+	drawH := float64(ih) * scale
+	drawX := (float64(screenW) - drawW) / 2
+	drawY := float64(screenH) - drawH - 18
+
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Scale(scale, scale)
+	op.GeoM.Translate(drawX, drawY)
+	op.ColorScale.ScaleAlpha(alpha)
+	screen.DrawImage(promptImage, op)
+}
+
 func drawSidePanel(screen *ebiten.Image) {
 	px := float32(boardOriginX() + boardWidth*cellSize + padding)
 	py := float32(padding)
@@ -622,14 +669,6 @@ func drawSidePanel(screen *ebiten.Image) {
 	vector.DrawFilledRect(screen, px-6, py-6, panelW+6, float32(screenH-padding*2+12), panelBg, false)
 
 	cursorY := py
-
-	// ===== Cabecalho =====
-	headerH := float32(52)
-	drawCard(screen, px-2, cursorY-2, panelW, headerH)
-	vector.DrawFilledRect(screen, px-2, cursorY-2, 3, headerH, accentPurple, false)
-	drawText(screen, "IMPERATETRIZ", faceBoldLg, int(px)+10, int(cursorY)+4, textWhite)
-	drawText(screen, "Paradigma Imperativo", faceRegularSm, int(px)+10, int(cursorY)+28, textDim)
-	cursorY += headerH + 8
 
 	// ===== Card de pontuacao =====
 	scoreCardH := float32(100)
@@ -731,13 +770,21 @@ func drawGameOver(screen *ebiten.Image) {
 	}
 
 	if gameOverTimer <= 0 {
-		vector.DrawFilledRect(screen, 0, 0, float32(screenW), float32(screenH), color.RGBA{0, 0, 0, 200}, false)
+		vector.DrawFilledRect(screen, 0, 0, float32(screenW), float32(screenH), color.RGBA{0, 0, 0, 220}, false)
+
+		// Calcula espaco reservado para prompt + score embaixo
+		promptH := 0.0
+		if promptImage != nil {
+			promptH = float64(promptImage.Bounds().Dy()) * (float64(screenW-40) / float64(promptImage.Bounds().Dx())) + 10
+		}
+		scoreH := 40.0
+		bottomReserve := promptH + scoreH
 
 		if gopherImage != nil {
 			iw := gopherImage.Bounds().Dx()
 			ih := gopherImage.Bounds().Dy()
 			maxW := float64(screenW - 40)
-			maxH := float64(screenH - 120)
+			maxH := float64(screenH) - bottomReserve - 20
 			scaleX := maxW / float64(iw)
 			scaleY := maxH / float64(ih)
 			scale := scaleX
@@ -747,7 +794,7 @@ func drawGameOver(screen *ebiten.Image) {
 			drawW := float64(iw) * scale
 			drawH := float64(ih) * scale
 			drawX := (float64(screenW) - drawW) / 2
-			drawY := (float64(screenH)-drawH)/2 - 30
+			drawY := (float64(screenH)-bottomReserve-drawH)/2
 
 			op := &ebiten.DrawImageOptions{}
 			op.GeoM.Scale(scale, scale)
@@ -755,9 +802,12 @@ func drawGameOver(screen *ebiten.Image) {
 			screen.DrawImage(gopherImage, op)
 		}
 
-		cx := screenW/2 - 120
-		cy := screenH - 56
-		drawText(screen, fmt.Sprintf("Score: %d   Recorde: %d", score, highScore), faceRegularMd, cx, cy, textWhite)
-		drawText(screen, "[ ENTER para voltar ao menu ]", faceRegularMd, cx+10, cy+20, textDim)
+		// Score centralizado acima do prompt
+		scoreStr := fmt.Sprintf("Score: %d   |   Recorde: %d", score, highScore)
+		scoreY := int(float64(screenH) - bottomReserve - 4)
+		sw, _ := text.Measure(scoreStr, faceRegularMd, 0)
+		drawText(screen, scoreStr, faceRegularMd, screenW/2-int(sw)/2, scoreY, textWhite)
+
+		drawPrompt(screen)
 	}
 }
