@@ -26,7 +26,7 @@ const boardWidth = 14
 const pieceSize = 4
 const cellSize = 34
 const padding = 16
-const sidePanel = 200
+const sidePanel = 240
 
 const screenW = boardWidth*cellSize + padding*2 + sidePanel
 const screenH = boardHeight*cellSize + padding*2
@@ -431,8 +431,10 @@ func drawStartScreen(screen *ebiten.Image) {
 
 		scaleX := float64(screenW) / float64(iw)
 		scaleY := float64(screenH) / float64(ih)
+		// Usa o MENOR fator de escala para garantir que a imagem inteira
+		// caiba na janela, evitando que topo/base sejam cortados.
 		scale := scaleX
-		if scaleY > scale {
+		if scaleY < scale {
 			scale = scaleY
 		}
 
@@ -586,7 +588,7 @@ func drawSidePanel(screen *ebiten.Image) {
 	cursorY += scoreCardH + 10
 
 	// ===== Card de proximas pecas =====
-	previewCardH := float32(176)
+	previewCardH := float32(195)
 	drawCard(screen, px-2, cursorY-2, panelW, previewCardH)
 	ebitenutil.DebugPrintAt(screen, "PROXIMAS", int(px)+8, int(cursorY)+8)
 	drawDivider(screen, px+8, cursorY+22, panelW-16)
@@ -620,7 +622,8 @@ func drawDivider(screen *ebiten.Image, x, y, w float32) {
 // drawPreviewPieces desenha as 3 proximas pecas empilhadas no painel lateral.
 // Cada peca ocupa um slot de altura fixa para manter o alinhamento visual.
 func drawPreviewPieces(screen *ebiten.Image, ox, oy int) {
-	slotH := 48 // altura de cada slot de preview
+	slotH := 50                // altura de cada slot de preview
+	previewCell := float32(18) // tamanho de celula reduzido, so para o preview
 
 	for i := 0; i < previewCount; i++ {
 		// Escurece o slot conforme a peca esta mais longe (1a mais brilhante, 3a mais apagada)
@@ -629,22 +632,32 @@ func drawPreviewPieces(screen *ebiten.Image, ox, oy int) {
 
 		// Realce no primeiro slot (proxima peca a cair)
 		if i == 0 {
-			vector.StrokeRect(screen, float32(ox)-4, float32(slotY)-4, float32(sidePanel-padding-12), float32(slotH-6), 1, accentCyan, false)
+			vector.StrokeRect(screen, float32(ox)-4, float32(slotY)-4, float32(sidePanel-padding-8), float32(slotH-8), 1, accentCyan, false)
 		}
 
-		// Desenha a peca com celulas pequenas, centralizada no slot
+		// Desenha a peca com celulas pequenas, com margem segura dentro do card
 		for row := 0; row < pieceSize; row++ {
 			for col := 0; col < pieceSize; col++ {
 				if nextPieces[i][row][col] == 1 {
 					c := pieceColors[nextColors[i]]
 					c.A = alpha
-					x := float32(ox + 14 + col*20)
-					y := float32(slotY + row*11)
-					drawCell(screen, x, y, c, true)
+					x := float32(ox+8) + float32(col)*previewCell
+					y := float32(slotY) + float32(row)*(previewCell*0.6)
+					drawMiniCell(screen, x, y, c, previewCell)
 				}
 			}
 		}
 	}
+}
+
+// drawMiniCell desenha uma celula de tamanho customizado, usada no preview
+// para garantir que as pecas caibam dentro dos limites do card lateral.
+func drawMiniCell(screen *ebiten.Image, x, y float32, c color.RGBA, s float32) {
+	vector.DrawFilledRect(screen, x+1, y+1, s-2, s-2, c, false)
+	bright := color.RGBA{clampAdd(c.R, 60), clampAdd(c.G, 60), clampAdd(c.B, 60), 200}
+	vector.DrawFilledRect(screen, x+1, y+1, s-2, 3, bright, false)
+	dark := color.RGBA{c.R / 2, c.G / 2, c.B / 2, 255}
+	vector.DrawFilledRect(screen, x+1, y+s-4, s-2, 3, dark, false)
 }
 
 // ===== ANIMACAO DE GAME OVER =====
