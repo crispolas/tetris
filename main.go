@@ -35,7 +35,7 @@ var fontBoldBytes []byte
 const boardHeight = 18
 const boardWidth = 14
 const pieceSize = 4
-const cellSize = 34
+const cellSize = 36
 const padding = 16
 const sidePanel = 270
 
@@ -501,30 +501,23 @@ func drawStartScreen(screen *ebiten.Image) {
 	if startImage != nil {
 		iw := startImage.Bounds().Dx()
 		ih := startImage.Bounds().Dy()
-
-		// Reserva espaco embaixo para o prompt
-		promptH := 0.0
-		if promptImage != nil {
-			promptH = float64(promptImage.Bounds().Dy()) * (float64(screenW-40) / float64(promptImage.Bounds().Dx())) + 24
-		}
-		availH := float64(screenH) - promptH
-		scaleX := float64(screenW-40) / float64(iw)
-		scaleY := availH / float64(ih)
+		// Escala "cover": preenche a tela inteira mantendo proporcao
+		scaleX := float64(screenW) / float64(iw)
+		scaleY := float64(screenH) / float64(ih)
 		scale := scaleX
-		if scaleY < scale {
+		if scaleY > scale {
 			scale = scaleY
 		}
-
 		drawW := float64(iw) * scale
 		drawH := float64(ih) * scale
 		drawX := (float64(screenW) - drawW) / 2
-		drawY := (availH-drawH)/2
-
+		drawY := (float64(screenH) - drawH) / 2
 		op := &ebiten.DrawImageOptions{}
 		op.GeoM.Scale(scale, scale)
 		op.GeoM.Translate(drawX, drawY)
 		screen.DrawImage(startImage, op)
 	}
+	// Prompt sobreposto na base da tela
 	drawPrompt(screen)
 }
 
@@ -770,43 +763,39 @@ func drawGameOver(screen *ebiten.Image) {
 	}
 
 	if gameOverTimer <= 0 {
-		vector.DrawFilledRect(screen, 0, 0, float32(screenW), float32(screenH), color.RGBA{0, 0, 0, 220}, false)
-
-		// Calcula espaco reservado para prompt + score embaixo
-		promptH := 0.0
-		if promptImage != nil {
-			promptH = float64(promptImage.Bounds().Dy()) * (float64(screenW-40) / float64(promptImage.Bounds().Dx())) + 10
-		}
-		scoreH := 40.0
-		bottomReserve := promptH + scoreH
-
+		// Imagem cobre a tela toda (cover)
 		if gopherImage != nil {
 			iw := gopherImage.Bounds().Dx()
 			ih := gopherImage.Bounds().Dy()
-			maxW := float64(screenW - 40)
-			maxH := float64(screenH) - bottomReserve - 20
-			scaleX := maxW / float64(iw)
-			scaleY := maxH / float64(ih)
+			scaleX := float64(screenW) / float64(iw)
+			scaleY := float64(screenH) / float64(ih)
 			scale := scaleX
-			if scaleY < scale {
+			if scaleY > scale {
 				scale = scaleY
 			}
 			drawW := float64(iw) * scale
 			drawH := float64(ih) * scale
 			drawX := (float64(screenW) - drawW) / 2
-			drawY := (float64(screenH)-bottomReserve-drawH)/2
-
+			drawY := (float64(screenH) - drawH) / 2
 			op := &ebiten.DrawImageOptions{}
 			op.GeoM.Scale(scale, scale)
 			op.GeoM.Translate(drawX, drawY)
 			screen.DrawImage(gopherImage, op)
 		}
 
-		// Score centralizado acima do prompt
+		// Overlay escuro sutil na metade inferior para legibilidade do score
+		promptH := 0.0
+		if promptImage != nil {
+			promptH = float64(promptImage.Bounds().Dy()) * (float64(screenW) / float64(promptImage.Bounds().Dx()))
+		}
+		overlayH := float32(promptH + 36)
+		vector.DrawFilledRect(screen, 0, float32(screenH)-overlayH-36, float32(screenW), overlayH+36, color.RGBA{0, 0, 0, 160}, false)
+
+		// Score acima do prompt
 		scoreStr := fmt.Sprintf("Score: %d   |   Recorde: %d", score, highScore)
-		scoreY := int(float64(screenH) - bottomReserve - 4)
-		sw, _ := text.Measure(scoreStr, faceRegularMd, 0)
-		drawText(screen, scoreStr, faceRegularMd, screenW/2-int(sw)/2, scoreY, textWhite)
+		scoreY := int(float64(screenH) - promptH - 28)
+		sw, _ := text.Measure(scoreStr, faceBoldMd, 0)
+		drawText(screen, scoreStr, faceBoldMd, screenW/2-int(sw)/2, scoreY, textWhite)
 
 		drawPrompt(screen)
 	}
