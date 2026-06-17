@@ -1,8 +1,13 @@
 package main
 
 import (
+	"bytes"
+	_ "embed"
 	"fmt"
 	"image/color"
+	_ "image/jpeg"
+	_ "image/png"
+	"math"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -10,19 +15,20 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/vector"
 )
 
+//go:embed gameover.png
+var gopherBytes []byte
+
 const boardHeight = 18
 const boardWidth = 14
 const pieceSize = 4
 const cellSize = 34
 const padding = 16
-const sidePanel = 180
+const sidePanel = 200
 
 const screenW = boardWidth*cellSize + padding*2 + sidePanel
 const screenH = boardHeight*cellSize + padding*2
 
 // ===== ESTADO GLOBAL (paradigma imperativo) =====
-// Matriz global do jogo: 0 = vazio; 1–7 = blocos fixos coloridos.
-// Mutacao explicita via ponteiros — nucleo identico ao original terminal.
 var board [boardHeight][boardWidth]int
 
 var currentPiece [pieceSize][pieceSize]int
@@ -30,14 +36,28 @@ var currentColor int
 var currentX int
 var currentY int
 var score int
+var highScore int
 var level int
 var linesCleared int
 var gameOver bool
+var gameStarted bool
 var seed int
 var tickAccum float64
 var tickInterval float64
 
-// Pecas identicas ao original — matrizes 4x4 sem objetos ou interfaces.
+// Flash de linhas
+var flashLines [boardHeight]bool
+var flashTimer float64
+
+const flashDuration = 0.18
+
+// Animacao de game over
+var gameOverTimer float64
+
+const gameOverAnimDuration = 1.5
+
+var gopherImage *ebiten.Image
+
 var pieces = [7][pieceSize][pieceSize]int{
 	{{0, 0, 0, 0}, {1, 1, 1, 1}, {0, 0, 0, 0}, {0, 0, 0, 0}},
 	{{1, 1, 0, 0}, {1, 1, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
@@ -48,23 +68,23 @@ var pieces = [7][pieceSize][pieceSize]int{
 	{{0, 0, 1, 0}, {1, 1, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
 }
 
-// Proxima peca — exibida no painel lateral
-var nextPiece [pieceSize][pieceSize]int
-var nextColor int
+// Fila das proximas 3 pecas
+const previewCount = 3
 
-// Paleta de cores das pecas
+var nextPieces [previewCount][pieceSize][pieceSize]int
+var nextColors [previewCount]int
+
 var pieceColors = [8]color.RGBA{
-	{0, 0, 0, 0},           // 0 = vazio
-	{0, 188, 212, 255},     // 1 ciano   - I
-	{255, 193, 7, 255},     // 2 amarelo - O
-	{156, 39, 176, 255},    // 3 roxo    - T
-	{76, 175, 80, 255},     // 4 verde   - S
-	{244, 67, 54, 255},     // 5 vermelho- Z
-	{33, 150, 243, 255},    // 6 azul    - J
-	{158, 158, 158, 255},   // 7 cinza   - L
+	{0, 0, 0, 0},
+	{0, 188, 212, 255},
+	{255, 193, 7, 255},
+	{156, 39, 176, 255},
+	{76, 175, 80, 255},
+	{244, 67, 54, 255},
+	{33, 150, 243, 255},
+	{158, 158, 158, 255},
 }
 
-// Game e a struct minima exigida pelo Ebitengine — sem logica de jogo aqui.
 type Game struct{}
 
 func main() {
@@ -72,7 +92,14 @@ func main() {
 	ebiten.SetWindowTitle("Tetris Imperativo — Go")
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeDisabled)
 
-	initGame()
+	img, _, err := ebitenutil.NewImageFromReader(bytes.NewReader(gopherBytes))
+	if err == nil {
+		gopherImage = img
+	}
+
+	highScore = 0
+	gameStarted = false
+	gameOver = false
 
 	if err := ebiten.RunGame(&Game{}); err != nil {
 		fmt.Println(err)
@@ -85,23 +112,31 @@ func initGame() {
 			board[row][col] = 0
 		}
 	}
+	for row := 0; row < boardHeight; row++ {
+		flashLines[row] = false
+	}
 
 	score = 0
 	level = 1
 	linesCleared = 0
 	gameOver = false
+	gameStarted = true
+	gameOverTimer = 0
 	tickAccum = 0
 	tickInterval = 0.5
+	flashTimer = 0
 	seed = int(time.Now().UnixNano() % 100000)
 
-	// Sorteia proxima peca antes de spawnar a primeira
-	ni := nextPieceIndex()
-	for r := 0; r < pieceSize; r++ {
-		for c := 0; c < pieceSize; c++ {
-			nextPiece[r][c] = pieces[ni][r][c]
+	// Preenche a fila de preview com 3 pecas
+	for i := 0; i < previewCount; i++ {
+		ni := nextPieceIndex()
+		for r := 0; r < pieceSize; r++ {
+			for c := 0; c < pieceSize; c++ {
+				nextPieces[i][r][c] = pieces[ni][r][c]
+			}
 		}
+		nextColors[i] = ni + 1
 	}
-	nextColor = ni + 1
 
 	spawnPiece()
 }
@@ -112,27 +147,44 @@ func nextPieceIndex() int {
 	return seed % 7
 }
 
+// spawnPiece consume a primeira peca da fila e gera uma nova no final
 func spawnPiece() {
+	// Pega a primeira da fila
 	for r := 0; r < pieceSize; r++ {
 		for c := 0; c < pieceSize; c++ {
-			currentPiece[r][c] = nextPiece[r][c]
+			currentPiece[r][c] = nextPieces[0][r][c]
 		}
 	}
-	currentColor = nextColor
+	currentColor = nextColors[0]
 
+	// Desloca a fila: cada peca avanca uma posicao
+	for i := 0; i < previewCount-1; i++ {
+		for r := 0; r < pieceSize; r++ {
+			for c := 0; c < pieceSize; c++ {
+				nextPieces[i][r][c] = nextPieces[i+1][r][c]
+			}
+		}
+		nextColors[i] = nextColors[i+1]
+	}
+
+	// Sorteia nova peca para o final da fila
 	ni := nextPieceIndex()
 	for r := 0; r < pieceSize; r++ {
 		for c := 0; c < pieceSize; c++ {
-			nextPiece[r][c] = pieces[ni][r][c]
+			nextPieces[previewCount-1][r][c] = pieces[ni][r][c]
 		}
 	}
-	nextColor = ni + 1
+	nextColors[previewCount-1] = ni + 1
 
 	currentX = boardWidth/2 - 2
 	currentY = 0
 
 	if !canPlace(currentPiece, currentX, currentY, &board) {
 		gameOver = true
+		gameOverTimer = gameOverAnimDuration
+		if score > highScore {
+			highScore = score
+		}
 	}
 }
 
@@ -183,8 +235,7 @@ func hardDrop() {
 		currentY++
 	}
 	lockPiece(&board)
-	clearFullLines(&board)
-	spawnPiece()
+	markFullLines(&board)
 }
 
 // ===== CONCEITO DA DISCIPLINA: MUTACAO EXPLICITA VIA PONTEIRO =====
@@ -202,9 +253,9 @@ func lockPiece(gameBoard *[boardHeight][boardWidth]int) {
 	}
 }
 
-func clearFullLines(gameBoard *[boardHeight][boardWidth]int) {
-	cleared := 0
-	for row := boardHeight - 1; row >= 0; row-- {
+func markFullLines(gameBoard *[boardHeight][boardWidth]int) {
+	found := false
+	for row := 0; row < boardHeight; row++ {
 		full := true
 		for col := 0; col < boardWidth; col++ {
 			if (*gameBoard)[row][col] == 0 {
@@ -213,28 +264,50 @@ func clearFullLines(gameBoard *[boardHeight][boardWidth]int) {
 			}
 		}
 		if full {
+			flashLines[row] = true
+			found = true
+		}
+	}
+	if found {
+		flashTimer = flashDuration
+	} else {
+		spawnPiece()
+	}
+}
+
+func clearFullLines(gameBoard *[boardHeight][boardWidth]int) {
+	cleared := 0
+	for row := boardHeight - 1; row >= 0; row-- {
+		if flashLines[row] {
 			cleared++
 			for mr := row; mr > 0; mr-- {
 				for col := 0; col < boardWidth; col++ {
 					(*gameBoard)[mr][col] = (*gameBoard)[mr-1][col]
 				}
+				flashLines[mr] = flashLines[mr-1]
 			}
 			for col := 0; col < boardWidth; col++ {
 				(*gameBoard)[0][col] = 0
 			}
+			flashLines[0] = false
 			row++
 		}
 	}
 	if cleared > 0 {
 		linesCleared += cleared
-		score += []int{0, 100, 300, 500, 800}[cleared]
+		// ===== SISTEMA DE PONTUACAO: bonus por combo + multiplicador de nivel =====
+		basePoints := []int{0, 100, 300, 500, 800}[cleared]
+		score += basePoints * level
+		if score > highScore {
+			highScore = score
+		}
 		level = linesCleared/10 + 1
-		// Acelera a gravidade conforme o nivel sobe
 		tickInterval = 0.5 - float64(level-1)*0.04
 		if tickInterval < 0.08 {
 			tickInterval = 0.08
 		}
 	}
+	spawnPiece()
 }
 
 func applyGravity(gameBoard *[boardHeight][boardWidth]int) {
@@ -242,8 +315,7 @@ func applyGravity(gameBoard *[boardHeight][boardWidth]int) {
 		currentY++
 	} else {
 		lockPiece(gameBoard)
-		clearFullLines(gameBoard)
-		spawnPiece()
+		markFullLines(gameBoard)
 	}
 }
 
@@ -255,17 +327,44 @@ func gameTick(gameBoard *[boardHeight][boardWidth]int) {
 	applyGravity(gameBoard)
 }
 
-// Update e chamado pelo Ebitengine a cada frame (60fps).
-// Processa input e acumula tempo para o tick de gravidade.
+var prevKeys = map[ebiten.Key]bool{}
+
+func inputJustPressed(key ebiten.Key) bool {
+	pressed := ebiten.IsKeyPressed(key)
+	wasPressed := prevKeys[key]
+	prevKeys[key] = pressed
+	return pressed && !wasPressed
+}
+
 func (g *Game) Update() error {
-	if gameOver {
-		if ebiten.IsKeyPressed(ebiten.KeyEnter) || ebiten.IsKeyPressed(ebiten.KeySpace) {
+	if !gameStarted {
+		if inputJustPressed(ebiten.KeyEnter) || inputJustPressed(ebiten.KeySpace) {
 			initGame()
 		}
 		return nil
 	}
 
-	// Input — uma verificacao por frame, sem goroutines necessarias na GUI
+	if gameOver {
+		if gameOverTimer > 0 {
+			gameOverTimer -= 1.0 / 60.0
+		}
+		if gameOverTimer <= 0 {
+			if inputJustPressed(ebiten.KeyEnter) || inputJustPressed(ebiten.KeySpace) {
+				gameStarted = false
+			}
+		}
+		return nil
+	}
+
+	if flashTimer > 0 {
+		flashTimer -= 1.0 / 60.0
+		if flashTimer <= 0 {
+			flashTimer = 0
+			clearFullLines(&board)
+		}
+		return nil
+	}
+
 	if inputJustPressed(ebiten.KeyA) || inputJustPressed(ebiten.KeyArrowLeft) {
 		movePiece(-1, 0)
 	}
@@ -282,7 +381,6 @@ func (g *Game) Update() error {
 		hardDrop()
 	}
 
-	// Gravidade baseada em tempo acumulado (delta time)
 	tickAccum += 1.0 / 60.0
 	if tickAccum >= tickInterval {
 		tickAccum = 0
@@ -292,29 +390,54 @@ func (g *Game) Update() error {
 	return nil
 }
 
-var prevKeys = map[ebiten.Key]bool{}
-
-func inputJustPressed(key ebiten.Key) bool {
-	pressed := ebiten.IsKeyPressed(key)
-	wasPressed := prevKeys[key]
-	prevKeys[key] = pressed
-	return pressed && !wasPressed
-}
-
-// Draw e chamado pelo Ebitengine apos cada Update.
-// Responsavel apenas pela renderizacao — sem logica de jogo aqui.
 func (g *Game) Draw(screen *ebiten.Image) {
-	// Fundo escuro
 	screen.Fill(color.RGBA{18, 18, 24, 255})
 
+	if !gameStarted {
+		drawStartScreen(screen)
+		return
+	}
+
 	drawBoard(screen)
-	drawCurrentPiece(screen)
-	drawGhost(screen)
+	if flashTimer <= 0 && !gameOver {
+		drawCurrentPiece(screen)
+		drawGhost(screen)
+	}
 	drawSidePanel(screen)
 
 	if gameOver {
 		drawGameOver(screen)
 	}
+}
+
+func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
+	return screenW, screenH
+}
+
+func drawStartScreen(screen *ebiten.Image) {
+	cx := screenW / 2
+	cy := screenH / 2
+
+	pw := float32(320)
+	ph := float32(210)
+	px := float32(cx) - pw/2
+	py := float32(cy) - ph/2
+	vector.DrawFilledRect(screen, px, py, pw, ph, color.RGBA{26, 26, 40, 240}, false)
+	vector.StrokeRect(screen, px, py, pw, ph, 2, color.RGBA{0, 188, 212, 255}, false)
+
+	ebitenutil.DebugPrintAt(screen, "TETRIS IMPERATIVO", cx-70, cy-76)
+	ebitenutil.DebugPrintAt(screen, "em Go — Paradigma Imperativo", cx-110, cy-60)
+	ebitenutil.DebugPrintAt(screen, "Grupo 1 — PLP 4N", cx-64, cy-36)
+	ebitenutil.DebugPrintAt(screen, "Gabriel  Crispin  Felipe", cx-88, cy-16)
+	ebitenutil.DebugPrintAt(screen, "Matheus  Emanuel  Jorge", cx-86, cy)
+
+	if highScore > 0 {
+		ebitenutil.DebugPrintAt(screen, fmt.Sprintf("High Score: %d", highScore), cx-52, cy+24)
+	}
+
+	ebitenutil.DebugPrintAt(screen, "[ ENTER ou ESPACO para jogar ]", cx-116, cy+58)
+	ebitenutil.DebugPrintAt(screen, "WASD / Setas   Espaco: drop", cx-104, cy+76)
+	ebitenutil.DebugPrintAt(screen, "Pontos x Nivel — combo de linhas!", cx-128, cy+94)
 }
 
 func boardOriginX() int { return padding }
@@ -326,25 +449,30 @@ func drawBoard(screen *ebiten.Image) {
 	bw := float32(boardWidth * cellSize)
 	bh := float32(boardHeight * cellSize)
 
-	// Fundo do tabuleiro
 	vector.DrawFilledRect(screen, ox, oy, bw, bh, color.RGBA{26, 26, 36, 255}, false)
 
-	// Grade
+	flashOn := int(flashTimer*20)%2 == 0
+
 	for row := 0; row < boardHeight; row++ {
 		for col := 0; col < boardWidth; col++ {
 			x := ox + float32(col*cellSize)
 			y := oy + float32(row*cellSize)
 			c := board[row][col]
-			if c != 0 {
+
+			if flashLines[row] {
+				if flashOn {
+					drawCell(screen, x, y, color.RGBA{255, 255, 255, 255}, false)
+				} else if c != 0 {
+					drawCell(screen, x, y, pieceColors[c], false)
+				}
+			} else if c != 0 {
 				drawCell(screen, x, y, pieceColors[c], false)
 			} else {
-				// Linha de grade sutil
 				vector.StrokeRect(screen, x+0.5, y+0.5, float32(cellSize)-1, float32(cellSize)-1, 0.5, color.RGBA{40, 40, 55, 255}, false)
 			}
 		}
 	}
 
-	// Borda do tabuleiro
 	vector.StrokeRect(screen, ox-1, oy-1, bw+2, bh+2, 2, color.RGBA{80, 80, 120, 255}, false)
 }
 
@@ -362,7 +490,6 @@ func drawCurrentPiece(screen *ebiten.Image) {
 	}
 }
 
-// Ghost: mostra onde a peca vai cair
 func drawGhost(screen *ebiten.Image) {
 	ghostY := currentY
 	for canPlace(currentPiece, currentX, ghostY+1, &board) {
@@ -390,17 +517,12 @@ func drawGhost(screen *ebiten.Image) {
 func drawCell(screen *ebiten.Image, x, y float32, c color.RGBA, small bool) {
 	s := float32(cellSize)
 	if small {
-		s = 24
+		s = 22
 	}
-	// Corpo principal
 	vector.DrawFilledRect(screen, x+1, y+1, s-2, s-2, c, false)
-	// Brilho superior
-	bright := color.RGBA{
-		clampAdd(c.R, 60), clampAdd(c.G, 60), clampAdd(c.B, 60), 200,
-	}
+	bright := color.RGBA{clampAdd(c.R, 60), clampAdd(c.G, 60), clampAdd(c.B, 60), 200}
 	vector.DrawFilledRect(screen, x+1, y+1, s-2, 4, bright, false)
 	vector.DrawFilledRect(screen, x+1, y+1, 4, s-2, bright, false)
-	// Sombra inferior
 	dark := color.RGBA{c.R / 2, c.G / 2, c.B / 2, 255}
 	vector.DrawFilledRect(screen, x+1, y+s-5, s-2, 4, dark, false)
 	vector.DrawFilledRect(screen, x+s-5, y+1, 4, s-2, dark, false)
@@ -420,39 +542,97 @@ func drawSidePanel(screen *ebiten.Image) {
 	ebitenutil.DebugPrintAt(screen, "TETRIS GO", int(px), int(py))
 	ebitenutil.DebugPrintAt(screen, "Imperativo", int(px), int(py)+14)
 
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Score\n%d", score), int(px), int(py)+46)
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Nivel\n%d", level), int(px), int(py)+86)
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Linhas\n%d", linesCleared), int(px), int(py)+126)
+	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Score\n%d", score), int(px), int(py)+40)
+	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Melhor\n%d", highScore), int(px), int(py)+74)
+	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Nivel  Linhas\n%d      %d", level, linesCleared), int(px), int(py)+108)
 
-	ebitenutil.DebugPrintAt(screen, "Proxima", int(px), int(py)+166)
-	drawNextPiece(screen, int(px), int(py)+182)
+	// Preview das proximas 3 pecas
+	ebitenutil.DebugPrintAt(screen, "Proximas", int(px), int(py)+142)
+	drawPreviewPieces(screen, int(px), int(py)+158)
 
-	ebitenutil.DebugPrintAt(screen, "Controles\nA/D mover\nW girar\nS descer\nESP drop", int(px), int(py)+290)
+	ebitenutil.DebugPrintAt(screen, "Controles\nA/D mover\nW girar\nS descer\nESP drop", int(px), int(py)+320)
 }
 
-func drawNextPiece(screen *ebiten.Image, ox, oy int) {
-	for row := 0; row < pieceSize; row++ {
-		for col := 0; col < pieceSize; col++ {
-			if nextPiece[row][col] == 1 {
-				x := float32(ox + col*24)
-				y := float32(oy + row*24)
-				drawCell(screen, x, y, pieceColors[nextColor], true)
+// drawPreviewPieces desenha as 3 proximas pecas empilhadas no painel lateral.
+// Cada peca ocupa um slot de altura fixa para manter o alinhamento visual.
+func drawPreviewPieces(screen *ebiten.Image, ox, oy int) {
+	slotH := 52 // altura de cada slot de preview
+
+	for i := 0; i < previewCount; i++ {
+		// Escurece o slot conforme a peca esta mais longe (1a mais brilhante, 3a mais apagada)
+		alpha := uint8(255 - i*60)
+		slotY := oy + i*slotH
+
+		// Fundo sutil do slot
+		vector.DrawFilledRect(
+			screen,
+			float32(ox)-2, float32(slotY)-2,
+			float32(sidePanel-padding), float32(slotH-4),
+			color.RGBA{30, 30, 45, alpha / 3},
+			false,
+		)
+
+		// Desenha a peca com celulas menores
+		for row := 0; row < pieceSize; row++ {
+			for col := 0; col < pieceSize; col++ {
+				if nextPieces[i][row][col] == 1 {
+					c := pieceColors[nextColors[i]]
+					// Aplica transparencia crescente nas pecas mais distantes
+					c.A = alpha
+					x := float32(ox + col*22)
+					y := float32(slotY + row*12)
+					drawCell(screen, x, y, c, true)
+				}
 			}
 		}
 	}
 }
 
+// ===== ANIMACAO DE GAME OVER =====
 func drawGameOver(screen *ebiten.Image) {
+	progress := 1.0 - (gameOverTimer / gameOverAnimDuration)
+	if progress < 0 {
+		progress = 0
+	}
+
+	linesFallen := int(math.Round(progress * float64(boardHeight)))
+
 	ox := float32(boardOriginX())
-	oy := float32(boardOriginY() + boardHeight*cellSize/2 - 30)
-	bw := float32(boardWidth * cellSize)
+	oy := float32(boardOriginY())
 
-	vector.DrawFilledRect(screen, ox, oy, bw, 60, color.RGBA{10, 10, 20, 220}, false)
-	ebitenutil.DebugPrintAt(screen, "FIM DE JOGO", int(ox)+50, int(oy)+10)
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Score: %d", score), int(ox)+65, int(oy)+26)
-	ebitenutil.DebugPrintAt(screen, "Enter p/ reiniciar", int(ox)+30, int(oy)+42)
-}
+	for row := 0; row < linesFallen && row < boardHeight; row++ {
+		y := oy + float32(row*cellSize)
+		vector.DrawFilledRect(screen, ox, y, float32(boardWidth*cellSize), float32(cellSize), color.RGBA{40, 40, 50, 220}, false)
+	}
 
-func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
-	return screenW, screenH
+	if gameOverTimer <= 0 {
+		vector.DrawFilledRect(screen, 0, 0, float32(screenW), float32(screenH), color.RGBA{0, 0, 0, 200}, false)
+
+		if gopherImage != nil {
+			iw := gopherImage.Bounds().Dx()
+			ih := gopherImage.Bounds().Dy()
+			maxW := float64(screenW - 40)
+			maxH := float64(screenH - 80)
+			scaleX := maxW / float64(iw)
+			scaleY := maxH / float64(ih)
+			scale := scaleX
+			if scaleY < scale {
+				scale = scaleY
+			}
+			drawW := float64(iw) * scale
+			drawH := float64(ih) * scale
+			drawX := (float64(screenW) - drawW) / 2
+			drawY := (float64(screenH)-drawH)/2 - 20
+
+			op := &ebiten.DrawImageOptions{}
+			op.GeoM.Scale(scale, scale)
+			op.GeoM.Translate(drawX, drawY)
+			screen.DrawImage(gopherImage, op)
+		}
+
+		cx := screenW / 2
+		cy := screenH - 40
+		ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Score: %d   Melhor: %d", score, highScore), cx-100, cy)
+		ebitenutil.DebugPrintAt(screen, "[ ENTER para voltar ao menu ]", cx-110, cy+16)
+	}
 }
