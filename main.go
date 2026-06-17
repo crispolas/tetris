@@ -12,7 +12,9 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
+	"github.com/hajimehoshi/ebiten/v2/text/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
+
 )
 
 //go:embed gameover.png
@@ -20,6 +22,12 @@ var gopherBytes []byte
 
 //go:embed start.png
 var startBytes []byte
+
+//go:embed font.ttf
+var fontRegularBytes []byte
+
+//go:embed font_bold.ttf
+var fontBoldBytes []byte
 
 const boardHeight = 18
 const boardWidth = 14
@@ -62,6 +70,14 @@ const gameOverAnimDuration = 1.5
 var gopherImage *ebiten.Image
 var startImage *ebiten.Image
 
+// Fontes TTF
+var faceRegularSm *text.GoTextFace
+var faceRegularMd *text.GoTextFace
+var faceBoldSm *text.GoTextFace
+var faceBoldMd *text.GoTextFace
+var faceBoldLg *text.GoTextFace
+var faceBoldXl *text.GoTextFace
+
 var pieces = [7][pieceSize][pieceSize]int{
 	{{0, 0, 0, 0}, {1, 1, 1, 1}, {0, 0, 0, 0}, {0, 0, 0, 0}},
 	{{1, 1, 0, 0}, {1, 1, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
@@ -91,10 +107,14 @@ var pieceColors = [8]color.RGBA{
 
 type Game struct{}
 
+
 func main() {
 	ebiten.SetWindowSize(screenW, screenH)
 	ebiten.SetWindowTitle("Tetris Imperativo — Go")
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeDisabled)
+
+	// Carrega fontes TTF
+	loadFontsFromBytes()
 
 	img, _, err := ebitenutil.NewImageFromReader(bytes.NewReader(gopherBytes))
 	if err == nil {
@@ -113,6 +133,34 @@ func main() {
 	if err := ebiten.RunGame(&Game{}); err != nil {
 		fmt.Println(err)
 	}
+}
+
+func loadFontsFromBytes() {
+	makeSource := func(data []byte) *text.GoTextFaceSource {
+		src, err := text.NewGoTextFaceSource(bytes.NewReader(data))
+		if err != nil {
+			panic(fmt.Sprintf("falha ao carregar fonte: %v", err))
+		}
+		return src
+	}
+
+	regSrc := makeSource(fontRegularBytes)
+	boldSrc := makeSource(fontBoldBytes)
+
+	faceRegularSm = &text.GoTextFace{Source: regSrc, Size: 11}
+	faceRegularMd = &text.GoTextFace{Source: regSrc, Size: 13}
+	faceBoldSm = &text.GoTextFace{Source: boldSrc, Size: 11}
+	faceBoldMd = &text.GoTextFace{Source: boldSrc, Size: 13}
+	faceBoldLg = &text.GoTextFace{Source: boldSrc, Size: 18}
+	faceBoldXl = &text.GoTextFace{Source: boldSrc, Size: 26}
+}
+
+// drawText desenha texto com a face especificada, cor e posicao (x, y = topo-esquerdo).
+func drawText(screen *ebiten.Image, str string, face *text.GoTextFace, x, y int, clr color.RGBA) {
+	op := &text.DrawOptions{}
+	op.GeoM.Translate(float64(x), float64(y))
+	op.ColorScale.ScaleWithColor(clr)
+	text.Draw(screen, str, face, op)
 }
 
 func initGame() {
@@ -136,7 +184,6 @@ func initGame() {
 	flashTimer = 0
 	seed = int(time.Now().UnixNano() % 100000)
 
-	// Preenche a fila de preview com 3 pecas
 	for i := 0; i < previewCount; i++ {
 		ni := nextPieceIndex()
 		for r := 0; r < pieceSize; r++ {
@@ -156,9 +203,7 @@ func nextPieceIndex() int {
 	return seed % 7
 }
 
-// spawnPiece consume a primeira peca da fila e gera uma nova no final
 func spawnPiece() {
-	// Pega a primeira da fila
 	for r := 0; r < pieceSize; r++ {
 		for c := 0; c < pieceSize; c++ {
 			currentPiece[r][c] = nextPieces[0][r][c]
@@ -166,7 +211,6 @@ func spawnPiece() {
 	}
 	currentColor = nextColors[0]
 
-	// Desloca a fila: cada peca avanca uma posicao
 	for i := 0; i < previewCount-1; i++ {
 		for r := 0; r < pieceSize; r++ {
 			for c := 0; c < pieceSize; c++ {
@@ -176,7 +220,6 @@ func spawnPiece() {
 		nextColors[i] = nextColors[i+1]
 	}
 
-	// Sorteia nova peca para o final da fila
 	ni := nextPieceIndex()
 	for r := 0; r < pieceSize; r++ {
 		for c := 0; c < pieceSize; c++ {
@@ -240,8 +283,15 @@ func rotatePiece() {
 }
 
 func hardDrop() {
+	dropped := 0
 	for canPlace(currentPiece, currentX, currentY+1, &board) {
 		currentY++
+		dropped++
+	}
+	// Hard drop: 2 pontos por linha caida
+	score += dropped * 2
+	if score > highScore {
+		highScore = score
 	}
 	lockPiece(&board)
 	markFullLines(&board)
@@ -380,8 +430,15 @@ func (g *Game) Update() error {
 	if inputJustPressed(ebiten.KeyD) || inputJustPressed(ebiten.KeyArrowRight) {
 		movePiece(1, 0)
 	}
+	// ===== SOFT DROP: S/seta-baixo soma 1 ponto por linha descida manualmente =====
 	if inputJustPressed(ebiten.KeyS) || inputJustPressed(ebiten.KeyArrowDown) {
-		movePiece(0, 1)
+		if canPlace(currentPiece, currentX, currentY+1, &board) {
+			currentY++
+			score += 1
+			if score > highScore {
+				highScore = score
+			}
+		}
 	}
 	if inputJustPressed(ebiten.KeyW) || inputJustPressed(ebiten.KeyArrowUp) {
 		rotatePiece()
@@ -424,15 +481,12 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 }
 
 func drawStartScreen(screen *ebiten.Image) {
-	// Capa em tela cheia: imagem escalada mantendo proporcao e centralizada.
 	if startImage != nil {
 		iw := startImage.Bounds().Dx()
 		ih := startImage.Bounds().Dy()
 
 		scaleX := float64(screenW) / float64(iw)
 		scaleY := float64(screenH) / float64(ih)
-		// Usa o MENOR fator de escala para garantir que a imagem inteira
-		// caiba na janela, evitando que topo/base sejam cortados.
 		scale := scaleX
 		if scaleY < scale {
 			scale = scaleY
@@ -450,7 +504,6 @@ func drawStartScreen(screen *ebiten.Image) {
 		return
 	}
 
-	// Fallback caso a imagem nao carregue
 	cx := screenW / 2
 	cy := screenH / 2
 	ebitenutil.DebugPrintAt(screen, "TETRIS IMPERATIVO", cx-70, cy-10)
@@ -552,11 +605,12 @@ func clampAdd(v uint8, add uint8) uint8 {
 	return v + add
 }
 
-// Paleta inspirada na capa: fundo azul-marinho escuro, acentos ciano e roxo.
+// Paleta
 var panelBg = color.RGBA{14, 16, 30, 255}
 var cardBg = color.RGBA{24, 27, 48, 255}
 var accentCyan = color.RGBA{56, 217, 235, 255}
 var accentPurple = color.RGBA{156, 100, 230, 255}
+var textWhite = color.RGBA{230, 232, 255, 255}
 var textDim = color.RGBA{140, 145, 170, 255}
 
 func drawSidePanel(screen *ebiten.Image) {
@@ -570,73 +624,73 @@ func drawSidePanel(screen *ebiten.Image) {
 	cursorY := py
 
 	// ===== Cabecalho =====
-	drawCard(screen, px-2, cursorY-2, panelW, 40)
-	vector.DrawFilledRect(screen, px-2, cursorY-2, 3, 40, accentPurple, false)
-	ebitenutil.DebugPrintAt(screen, "IMPERATETRIZ", int(px)+10, int(cursorY)+6)
-	ebitenutil.DebugPrintAt(screen, "Paradigma Imperativo", int(px)+10, int(cursorY)+20)
-	cursorY += 50
+	headerH := float32(52)
+	drawCard(screen, px-2, cursorY-2, panelW, headerH)
+	vector.DrawFilledRect(screen, px-2, cursorY-2, 3, headerH, accentPurple, false)
+	drawText(screen, "IMPERATETRIZ", faceBoldLg, int(px)+10, int(cursorY)+4, textWhite)
+	drawText(screen, "Paradigma Imperativo", faceRegularSm, int(px)+10, int(cursorY)+28, textDim)
+	cursorY += headerH + 8
 
 	// ===== Card de pontuacao =====
-	scoreCardH := float32(86)
+	scoreCardH := float32(100)
 	drawCard(screen, px-2, cursorY-2, panelW, scoreCardH)
-	ebitenutil.DebugPrintAt(screen, "SCORE", int(px)+10, int(cursorY)+8)
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%d", score), int(px)+10, int(cursorY)+22)
-	drawDivider(screen, px+10, cursorY+42, panelW-20)
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Melhor: %d", highScore), int(px)+10, int(cursorY)+50)
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Nivel: %d", level), int(px)+10, int(cursorY)+64)
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Linhas: %d", linesCleared), int(px)+10, int(cursorY)+76)
-	cursorY += scoreCardH + 10
+	drawText(screen, "PONTUAÇÃO", faceBoldSm, int(px)+10, int(cursorY)+6, accentCyan)
+	drawText(screen, fmt.Sprintf("%d", score), faceBoldXl, int(px)+10, int(cursorY)+22, textWhite)
+	drawDivider(screen, px+10, cursorY+54, panelW-20)
+	drawText(screen, fmt.Sprintf("Recorde: %d", highScore), faceRegularMd, int(px)+10, int(cursorY)+60, textDim)
+	drawText(screen, fmt.Sprintf("Nível %d   |   %d linhas", level, linesCleared), faceRegularSm, int(px)+10, int(cursorY)+78, textDim)
+	cursorY += scoreCardH + 8
 
 	// ===== Card de proximas pecas =====
-	previewCardH := float32(180)
+	previewCardH := float32(186)
 	drawCard(screen, px-2, cursorY-2, panelW, previewCardH)
-	ebitenutil.DebugPrintAt(screen, "PROXIMAS", int(px)+10, int(cursorY)+8)
-	drawDivider(screen, px+10, cursorY+22, panelW-20)
+	drawText(screen, "PRÓXIMAS", faceBoldSm, int(px)+10, int(cursorY)+6, accentCyan)
+	drawDivider(screen, px+10, cursorY+24, panelW-20)
 	drawPreviewPieces(screen, int(px)+10, int(cursorY)+32)
-	cursorY += previewCardH + 10
+	cursorY += previewCardH + 8
 
 	// ===== Card de controles =====
-	controlsCardH := float32(124)
+	controlsCardH := float32(136)
 	drawCard(screen, px-2, cursorY-2, panelW, controlsCardH)
-	ebitenutil.DebugPrintAt(screen, "CONTROLES", int(px)+10, int(cursorY)+8)
-	drawDivider(screen, px+10, cursorY+22, panelW-20)
-	ebitenutil.DebugPrintAt(screen, "A / D     mover", int(px)+10, int(cursorY)+34)
-	ebitenutil.DebugPrintAt(screen, "W         girar", int(px)+10, int(cursorY)+50)
-	ebitenutil.DebugPrintAt(screen, "S         descer", int(px)+10, int(cursorY)+66)
-	ebitenutil.DebugPrintAt(screen, "ESPACO    drop", int(px)+10, int(cursorY)+82)
-	ebitenutil.DebugPrintAt(screen, "(ou use as setas)", int(px)+10, int(cursorY)+102)
+	drawText(screen, "CONTROLES", faceBoldSm, int(px)+10, int(cursorY)+6, accentCyan)
+	drawDivider(screen, px+10, cursorY+24, panelW-20)
+
+	type ctrl struct{ key, desc string }
+	controles := []ctrl{
+		{"A / D  ou  ←→", "mover"},
+		{"W  ou  ↑", "girar"},
+		{"S  ou  ↓", "descer  (+1 pt)"},
+		{"ESPAÇO", "hard drop  (+2 pt/linha)"},
+	}
+	for i, c := range controles {
+		y := int(cursorY) + 34 + i*24
+		drawText(screen, c.key, faceBoldSm, int(px)+10, y, textWhite)
+		drawText(screen, c.desc, faceRegularSm, int(px)+10, y+13, textDim)
+	}
 }
 
-// drawCard desenha um retangulo de fundo com borda sutil, usado para
-// agrupar visualmente secoes do painel lateral (score, preview, controles).
 func drawCard(screen *ebiten.Image, x, y, w, h float32) {
 	vector.DrawFilledRect(screen, x, y, w, h, cardBg, false)
 	vector.StrokeRect(screen, x, y, w, h, 1, color.RGBA{50, 55, 80, 255}, false)
 }
 
-// drawDivider desenha uma linha horizontal fina para separar conteudo dentro de um card.
 func drawDivider(screen *ebiten.Image, x, y, w float32) {
 	vector.StrokeLine(screen, x, y, x+w, y, 1, color.RGBA{45, 50, 75, 255}, false)
 }
 
-// drawPreviewPieces desenha as 3 proximas pecas empilhadas no painel lateral.
-// Cada peca ocupa um slot de altura fixa para manter o alinhamento visual.
 func drawPreviewPieces(screen *ebiten.Image, ox, oy int) {
-	slotH := 46                // altura de cada slot de preview
-	previewCell := float32(16) // tamanho de celula reduzido, so para o preview
+	slotH := 48
+	previewCell := float32(16)
 	highlightW := float32(sidePanel - padding*2 - 8)
 
 	for i := 0; i < previewCount; i++ {
-		// Escurece o slot conforme a peca esta mais longe (1a mais brilhante, 3a mais apagada)
 		alpha := uint8(255 - i*70)
 		slotY := oy + i*slotH
 
-		// Realce no primeiro slot (proxima peca a cair)
 		if i == 0 {
 			vector.StrokeRect(screen, float32(ox)-4, float32(slotY)-4, highlightW, float32(slotH-6), 1, accentCyan, false)
 		}
 
-		// Desenha a peca com celulas pequenas, com margem segura dentro do card
 		for row := 0; row < pieceSize; row++ {
 			for col := 0; col < pieceSize; col++ {
 				if nextPieces[i][row][col] == 1 {
@@ -651,8 +705,6 @@ func drawPreviewPieces(screen *ebiten.Image, ox, oy int) {
 	}
 }
 
-// drawMiniCell desenha uma celula de tamanho customizado, usada no preview
-// para garantir que as pecas caibam dentro dos limites do card lateral.
 func drawMiniCell(screen *ebiten.Image, x, y float32, c color.RGBA, s float32) {
 	vector.DrawFilledRect(screen, x+1, y+1, s-2, s-2, c, false)
 	bright := color.RGBA{clampAdd(c.R, 60), clampAdd(c.G, 60), clampAdd(c.B, 60), 200}
@@ -685,7 +737,7 @@ func drawGameOver(screen *ebiten.Image) {
 			iw := gopherImage.Bounds().Dx()
 			ih := gopherImage.Bounds().Dy()
 			maxW := float64(screenW - 40)
-			maxH := float64(screenH - 80)
+			maxH := float64(screenH - 120)
 			scaleX := maxW / float64(iw)
 			scaleY := maxH / float64(ih)
 			scale := scaleX
@@ -695,7 +747,7 @@ func drawGameOver(screen *ebiten.Image) {
 			drawW := float64(iw) * scale
 			drawH := float64(ih) * scale
 			drawX := (float64(screenW) - drawW) / 2
-			drawY := (float64(screenH)-drawH)/2 - 20
+			drawY := (float64(screenH)-drawH)/2 - 30
 
 			op := &ebiten.DrawImageOptions{}
 			op.GeoM.Scale(scale, scale)
@@ -703,9 +755,9 @@ func drawGameOver(screen *ebiten.Image) {
 			screen.DrawImage(gopherImage, op)
 		}
 
-		cx := screenW / 2
-		cy := screenH - 40
-		ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Score: %d   Melhor: %d", score, highScore), cx-100, cy)
-		ebitenutil.DebugPrintAt(screen, "[ ENTER para voltar ao menu ]", cx-110, cy+16)
+		cx := screenW/2 - 120
+		cy := screenH - 56
+		drawText(screen, fmt.Sprintf("Score: %d   Recorde: %d", score, highScore), faceRegularMd, cx, cy, textWhite)
+		drawText(screen, "[ ENTER para voltar ao menu ]", faceRegularMd, cx+10, cy+20, textDim)
 	}
 }
