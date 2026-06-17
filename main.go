@@ -18,6 +18,9 @@ import (
 //go:embed gameover.png
 var gopherBytes []byte
 
+//go:embed start.png
+var startBytes []byte
+
 const boardHeight = 18
 const boardWidth = 14
 const pieceSize = 4
@@ -57,6 +60,7 @@ var gameOverTimer float64
 const gameOverAnimDuration = 1.5
 
 var gopherImage *ebiten.Image
+var startImage *ebiten.Image
 
 var pieces = [7][pieceSize][pieceSize]int{
 	{{0, 0, 0, 0}, {1, 1, 1, 1}, {0, 0, 0, 0}, {0, 0, 0, 0}},
@@ -95,6 +99,11 @@ func main() {
 	img, _, err := ebitenutil.NewImageFromReader(bytes.NewReader(gopherBytes))
 	if err == nil {
 		gopherImage = img
+	}
+
+	simg, _, serr := ebitenutil.NewImageFromReader(bytes.NewReader(startBytes))
+	if serr == nil {
+		startImage = simg
 	}
 
 	highScore = 0
@@ -415,29 +424,35 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 }
 
 func drawStartScreen(screen *ebiten.Image) {
-	cx := screenW / 2
-	cy := screenH / 2
+	// Capa em tela cheia: imagem escalada mantendo proporcao e centralizada.
+	if startImage != nil {
+		iw := startImage.Bounds().Dx()
+		ih := startImage.Bounds().Dy()
 
-	pw := float32(320)
-	ph := float32(210)
-	px := float32(cx) - pw/2
-	py := float32(cy) - ph/2
-	vector.DrawFilledRect(screen, px, py, pw, ph, color.RGBA{26, 26, 40, 240}, false)
-	vector.StrokeRect(screen, px, py, pw, ph, 2, color.RGBA{0, 188, 212, 255}, false)
+		scaleX := float64(screenW) / float64(iw)
+		scaleY := float64(screenH) / float64(ih)
+		scale := scaleX
+		if scaleY > scale {
+			scale = scaleY
+		}
 
-	ebitenutil.DebugPrintAt(screen, "TETRIS IMPERATIVO", cx-70, cy-76)
-	ebitenutil.DebugPrintAt(screen, "em Go — Paradigma Imperativo", cx-110, cy-60)
-	ebitenutil.DebugPrintAt(screen, "Grupo 1 — PLP 4N", cx-64, cy-36)
-	ebitenutil.DebugPrintAt(screen, "Gabriel  Crispin  Felipe", cx-88, cy-16)
-	ebitenutil.DebugPrintAt(screen, "Matheus  Emanuel  Jorge", cx-86, cy)
+		drawW := float64(iw) * scale
+		drawH := float64(ih) * scale
+		drawX := (float64(screenW) - drawW) / 2
+		drawY := (float64(screenH) - drawH) / 2
 
-	if highScore > 0 {
-		ebitenutil.DebugPrintAt(screen, fmt.Sprintf("High Score: %d", highScore), cx-52, cy+24)
+		op := &ebiten.DrawImageOptions{}
+		op.GeoM.Scale(scale, scale)
+		op.GeoM.Translate(drawX, drawY)
+		screen.DrawImage(startImage, op)
+		return
 	}
 
-	ebitenutil.DebugPrintAt(screen, "[ ENTER ou ESPACO para jogar ]", cx-116, cy+58)
-	ebitenutil.DebugPrintAt(screen, "WASD / Setas   Espaco: drop", cx-104, cy+76)
-	ebitenutil.DebugPrintAt(screen, "Pontos x Nivel — combo de linhas!", cx-128, cy+94)
+	// Fallback caso a imagem nao carregue
+	cx := screenW / 2
+	cy := screenH / 2
+	ebitenutil.DebugPrintAt(screen, "TETRIS IMPERATIVO", cx-70, cy-10)
+	ebitenutil.DebugPrintAt(screen, "[ ENTER ou ESPACO para jogar ]", cx-116, cy+10)
 }
 
 func boardOriginX() int { return padding }
@@ -535,52 +550,96 @@ func clampAdd(v uint8, add uint8) uint8 {
 	return v + add
 }
 
+// Paleta inspirada na capa: fundo azul-marinho escuro, acentos ciano e roxo.
+var panelBg = color.RGBA{14, 16, 30, 255}
+var cardBg = color.RGBA{24, 27, 48, 255}
+var accentCyan = color.RGBA{56, 217, 235, 255}
+var accentPurple = color.RGBA{156, 100, 230, 255}
+var textDim = color.RGBA{140, 145, 170, 255}
+
 func drawSidePanel(screen *ebiten.Image) {
 	px := float32(boardOriginX() + boardWidth*cellSize + padding)
 	py := float32(padding)
+	panelW := float32(sidePanel - padding)
 
-	ebitenutil.DebugPrintAt(screen, "TETRIS GO", int(px), int(py))
-	ebitenutil.DebugPrintAt(screen, "Imperativo", int(px), int(py)+14)
+	// Fundo geral do painel
+	vector.DrawFilledRect(screen, px-6, py-6, panelW+6, float32(screenH-padding*2+12), panelBg, false)
 
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Score\n%d", score), int(px), int(py)+40)
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Melhor\n%d", highScore), int(px), int(py)+74)
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Nivel  Linhas\n%d      %d", level, linesCleared), int(px), int(py)+108)
+	cursorY := py
 
-	// Preview das proximas 3 pecas
-	ebitenutil.DebugPrintAt(screen, "Proximas", int(px), int(py)+142)
-	drawPreviewPieces(screen, int(px), int(py)+158)
+	// ===== Cabecalho =====
+	drawCard(screen, px-2, cursorY-2, panelW, 36)
+	vector.DrawFilledRect(screen, px-2, cursorY-2, 3, 36, accentPurple, false)
+	ebitenutil.DebugPrintAt(screen, "IMPERATETRIZ", int(px)+8, int(cursorY)+6)
+	ebitenutil.DebugPrintAt(screen, "Paradigma Imperativo — Go", int(px)+8, int(cursorY)+20)
+	cursorY += 46
 
-	ebitenutil.DebugPrintAt(screen, "Controles\nA/D mover\nW girar\nS descer\nESP drop", int(px), int(py)+320)
+	// ===== Card de pontuacao =====
+	scoreCardH := float32(76)
+	drawCard(screen, px-2, cursorY-2, panelW, scoreCardH)
+	ebitenutil.DebugPrintAt(screen, "SCORE", int(px)+8, int(cursorY)+8)
+	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%d", score), int(px)+8, int(cursorY)+22)
+	drawDivider(screen, px+8, cursorY+40, panelW-16)
+	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Melhor: %d", highScore), int(px)+8, int(cursorY)+48)
+	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Nivel %d", level), int(px)+8, int(cursorY)+62)
+	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%d linhas", linesCleared), int(px)+98, int(cursorY)+62)
+	cursorY += scoreCardH + 10
+
+	// ===== Card de proximas pecas =====
+	previewCardH := float32(176)
+	drawCard(screen, px-2, cursorY-2, panelW, previewCardH)
+	ebitenutil.DebugPrintAt(screen, "PROXIMAS", int(px)+8, int(cursorY)+8)
+	drawDivider(screen, px+8, cursorY+22, panelW-16)
+	drawPreviewPieces(screen, int(px)+8, int(cursorY)+32)
+	cursorY += previewCardH + 10
+
+	// ===== Card de controles =====
+	controlsCardH := float32(118)
+	drawCard(screen, px-2, cursorY-2, panelW, controlsCardH)
+	ebitenutil.DebugPrintAt(screen, "CONTROLES", int(px)+8, int(cursorY)+8)
+	drawDivider(screen, px+8, cursorY+22, panelW-16)
+	ebitenutil.DebugPrintAt(screen, "A / D   mover", int(px)+8, int(cursorY)+32)
+	ebitenutil.DebugPrintAt(screen, "W       girar", int(px)+8, int(cursorY)+48)
+	ebitenutil.DebugPrintAt(screen, "S       descer", int(px)+8, int(cursorY)+64)
+	ebitenutil.DebugPrintAt(screen, "ESPACO  drop", int(px)+8, int(cursorY)+80)
+	ebitenutil.DebugPrintAt(screen, "ou use as setas", int(px)+8, int(cursorY)+98)
+}
+
+// drawCard desenha um retangulo de fundo com borda sutil, usado para
+// agrupar visualmente secoes do painel lateral (score, preview, controles).
+func drawCard(screen *ebiten.Image, x, y, w, h float32) {
+	vector.DrawFilledRect(screen, x, y, w, h, cardBg, false)
+	vector.StrokeRect(screen, x, y, w, h, 1, color.RGBA{50, 55, 80, 255}, false)
+}
+
+// drawDivider desenha uma linha horizontal fina para separar conteudo dentro de um card.
+func drawDivider(screen *ebiten.Image, x, y, w float32) {
+	vector.StrokeLine(screen, x, y, x+w, y, 1, color.RGBA{45, 50, 75, 255}, false)
 }
 
 // drawPreviewPieces desenha as 3 proximas pecas empilhadas no painel lateral.
 // Cada peca ocupa um slot de altura fixa para manter o alinhamento visual.
 func drawPreviewPieces(screen *ebiten.Image, ox, oy int) {
-	slotH := 52 // altura de cada slot de preview
+	slotH := 48 // altura de cada slot de preview
 
 	for i := 0; i < previewCount; i++ {
 		// Escurece o slot conforme a peca esta mais longe (1a mais brilhante, 3a mais apagada)
-		alpha := uint8(255 - i*60)
+		alpha := uint8(255 - i*70)
 		slotY := oy + i*slotH
 
-		// Fundo sutil do slot
-		vector.DrawFilledRect(
-			screen,
-			float32(ox)-2, float32(slotY)-2,
-			float32(sidePanel-padding), float32(slotH-4),
-			color.RGBA{30, 30, 45, alpha / 3},
-			false,
-		)
+		// Realce no primeiro slot (proxima peca a cair)
+		if i == 0 {
+			vector.StrokeRect(screen, float32(ox)-4, float32(slotY)-4, float32(sidePanel-padding-12), float32(slotH-6), 1, accentCyan, false)
+		}
 
-		// Desenha a peca com celulas menores
+		// Desenha a peca com celulas pequenas, centralizada no slot
 		for row := 0; row < pieceSize; row++ {
 			for col := 0; col < pieceSize; col++ {
 				if nextPieces[i][row][col] == 1 {
 					c := pieceColors[nextColors[i]]
-					// Aplica transparencia crescente nas pecas mais distantes
 					c.A = alpha
-					x := float32(ox + col*22)
-					y := float32(slotY + row*12)
+					x := float32(ox + 14 + col*20)
+					y := float32(slotY + row*11)
 					drawCell(screen, x, y, c, true)
 				}
 			}
