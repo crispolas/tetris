@@ -26,7 +26,7 @@ const boardWidth = 14
 const pieceSize = 4
 const cellSize = 34
 const padding = 16
-const sidePanel = 240
+const sidePanel = 270
 
 const screenW = boardWidth*cellSize + padding*2 + sidePanel
 const screenH = boardHeight*cellSize + padding*2
@@ -570,41 +570,41 @@ func drawSidePanel(screen *ebiten.Image) {
 	cursorY := py
 
 	// ===== Cabecalho =====
-	drawCard(screen, px-2, cursorY-2, panelW, 36)
-	vector.DrawFilledRect(screen, px-2, cursorY-2, 3, 36, accentPurple, false)
-	ebitenutil.DebugPrintAt(screen, "IMPERATETRIZ", int(px)+8, int(cursorY)+6)
-	ebitenutil.DebugPrintAt(screen, "Paradigma Imperativo — Go", int(px)+8, int(cursorY)+20)
-	cursorY += 46
+	drawCard(screen, px-2, cursorY-2, panelW, 40)
+	vector.DrawFilledRect(screen, px-2, cursorY-2, 3, 40, accentPurple, false)
+	ebitenutil.DebugPrintAt(screen, "IMPERATETRIZ", int(px)+10, int(cursorY)+6)
+	ebitenutil.DebugPrintAt(screen, "Paradigma Imperativo", int(px)+10, int(cursorY)+20)
+	cursorY += 50
 
 	// ===== Card de pontuacao =====
-	scoreCardH := float32(76)
+	scoreCardH := float32(86)
 	drawCard(screen, px-2, cursorY-2, panelW, scoreCardH)
-	ebitenutil.DebugPrintAt(screen, "SCORE", int(px)+8, int(cursorY)+8)
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%d", score), int(px)+8, int(cursorY)+22)
-	drawDivider(screen, px+8, cursorY+40, panelW-16)
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Melhor: %d", highScore), int(px)+8, int(cursorY)+48)
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Nivel %d", level), int(px)+8, int(cursorY)+62)
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%d linhas", linesCleared), int(px)+98, int(cursorY)+62)
+	ebitenutil.DebugPrintAt(screen, "SCORE", int(px)+10, int(cursorY)+8)
+	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%d", score), int(px)+10, int(cursorY)+22)
+	drawDivider(screen, px+10, cursorY+42, panelW-20)
+	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Melhor: %d", highScore), int(px)+10, int(cursorY)+50)
+	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Nivel: %d", level), int(px)+10, int(cursorY)+64)
+	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("Linhas: %d", linesCleared), int(px)+10, int(cursorY)+76)
 	cursorY += scoreCardH + 10
 
 	// ===== Card de proximas pecas =====
-	previewCardH := float32(195)
+	previewCardH := float32(180)
 	drawCard(screen, px-2, cursorY-2, panelW, previewCardH)
-	ebitenutil.DebugPrintAt(screen, "PROXIMAS", int(px)+8, int(cursorY)+8)
-	drawDivider(screen, px+8, cursorY+22, panelW-16)
-	drawPreviewPieces(screen, int(px)+8, int(cursorY)+32)
+	ebitenutil.DebugPrintAt(screen, "PROXIMAS", int(px)+10, int(cursorY)+8)
+	drawDivider(screen, px+10, cursorY+22, panelW-20)
+	drawPreviewPieces(screen, int(px)+10, int(cursorY)+32)
 	cursorY += previewCardH + 10
 
 	// ===== Card de controles =====
-	controlsCardH := float32(118)
+	controlsCardH := float32(124)
 	drawCard(screen, px-2, cursorY-2, panelW, controlsCardH)
-	ebitenutil.DebugPrintAt(screen, "CONTROLES", int(px)+8, int(cursorY)+8)
-	drawDivider(screen, px+8, cursorY+22, panelW-16)
-	ebitenutil.DebugPrintAt(screen, "A / D   mover", int(px)+8, int(cursorY)+32)
-	ebitenutil.DebugPrintAt(screen, "W       girar", int(px)+8, int(cursorY)+48)
-	ebitenutil.DebugPrintAt(screen, "S       descer", int(px)+8, int(cursorY)+64)
-	ebitenutil.DebugPrintAt(screen, "ESPACO  drop", int(px)+8, int(cursorY)+80)
-	ebitenutil.DebugPrintAt(screen, "ou use as setas", int(px)+8, int(cursorY)+98)
+	ebitenutil.DebugPrintAt(screen, "CONTROLES", int(px)+10, int(cursorY)+8)
+	drawDivider(screen, px+10, cursorY+22, panelW-20)
+	ebitenutil.DebugPrintAt(screen, "A / D     mover", int(px)+10, int(cursorY)+34)
+	ebitenutil.DebugPrintAt(screen, "W         girar", int(px)+10, int(cursorY)+50)
+	ebitenutil.DebugPrintAt(screen, "S         descer", int(px)+10, int(cursorY)+66)
+	ebitenutil.DebugPrintAt(screen, "ESPACO    drop", int(px)+10, int(cursorY)+82)
+	ebitenutil.DebugPrintAt(screen, "(ou use as setas)", int(px)+10, int(cursorY)+102)
 }
 
 // drawCard desenha um retangulo de fundo com borda sutil, usado para
@@ -622,8 +622,9 @@ func drawDivider(screen *ebiten.Image, x, y, w float32) {
 // drawPreviewPieces desenha as 3 proximas pecas empilhadas no painel lateral.
 // Cada peca ocupa um slot de altura fixa para manter o alinhamento visual.
 func drawPreviewPieces(screen *ebiten.Image, ox, oy int) {
-	slotH := 50                // altura de cada slot de preview
-	previewCell := float32(18) // tamanho de celula reduzido, so para o preview
+	slotH := 46                // altura de cada slot de preview
+	previewCell := float32(16) // tamanho de celula reduzido, so para o preview
+	highlightW := float32(sidePanel - padding*2 - 8)
 
 	for i := 0; i < previewCount; i++ {
 		// Escurece o slot conforme a peca esta mais longe (1a mais brilhante, 3a mais apagada)
@@ -632,7 +633,7 @@ func drawPreviewPieces(screen *ebiten.Image, ox, oy int) {
 
 		// Realce no primeiro slot (proxima peca a cair)
 		if i == 0 {
-			vector.StrokeRect(screen, float32(ox)-4, float32(slotY)-4, float32(sidePanel-padding-8), float32(slotH-8), 1, accentCyan, false)
+			vector.StrokeRect(screen, float32(ox)-4, float32(slotY)-4, highlightW, float32(slotH-6), 1, accentCyan, false)
 		}
 
 		// Desenha a peca com celulas pequenas, com margem segura dentro do card
@@ -641,7 +642,7 @@ func drawPreviewPieces(screen *ebiten.Image, ox, oy int) {
 				if nextPieces[i][row][col] == 1 {
 					c := pieceColors[nextColors[i]]
 					c.A = alpha
-					x := float32(ox+8) + float32(col)*previewCell
+					x := float32(ox+6) + float32(col)*previewCell
 					y := float32(slotY) + float32(row)*(previewCell*0.6)
 					drawMiniCell(screen, x, y, c, previewCell)
 				}
